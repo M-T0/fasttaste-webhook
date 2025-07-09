@@ -9,76 +9,101 @@ app.use(express.json());
 app.post('/api', (req, res) => {
   // Lấy ra tên của Intent mà Dialogflow vừa xác định được
   const intentName = req.body.queryResult.intent.displayName;
+  const sessionPath = req.body.sessionInfo.session; // Lấy đường dẫn session
 
   // Lấy ra thông tin của phiên làm việc (session) để lưu trữ giỏ hàng
-  // Nếu không có sessionInfo, tạo một object rỗng để tránh lỗi
   const sessionInfo = req.body.sessionInfo || {};
   const sessionParams = sessionInfo.parameters || {};
 
   // Lấy giỏ hàng từ session. Nếu chưa có giỏ hàng (lần đầu vào), tạo một mảng rỗng.
   let cart = sessionParams.cart || [];
 
-  // Biến này sẽ chứa câu trả lời cuối cùng của bot
-  let responseText = '';
+  // Mảng này sẽ chứa toàn bộ các tin nhắn gửi về (văn bản + nút bấm)
+  let fulfillmentMessages = [];
+  // Mảng này sẽ chứa các context cần gửi lại cho Dialogflow
+  let outputContexts = [];
 
   // Bắt đầu sơ đồ logic xử lý cho từng Intent
-  // QUAN TRỌNG: Tên trong 'case' phải khớp 100% với tên Intent trong Dialogflow
   switch (intentName) {
-    // Trường hợp người dùng chọn món hoặc thêm món
-    // Gộp 2 intent 'Xem Menu - chonmon' và 'muathem' vào cùng một xử lý
-    case 'Xem Menu - chonmon': // Tên này có thể bạn cần đổi lại cho khớp
+    case 'Xem Menu - chonmon':
     case 'muathem': {
-      // Lấy danh sách món ăn từ parameter 'mon_an'
       let newItems = req.body.queryResult.parameters.mon_an || [];
-
-      // Đảm bảo newItems luôn là một mảng để xử lý cho gọn
       if (!Array.isArray(newItems)) {
         newItems = [newItems];
       }
 
       if (newItems.length > 0) {
-        // Thêm các món mới vào giỏ hàng
         cart = cart.concat(newItems);
-        
-        // Tạo câu trả lời thông minh
-        const addedItemsText = newItems.join(', '); // Ví dụ: "combo 1, gà rán"
-        responseText = `Đã thêm "${addedItemsText}" vào giỏ hàng. Giỏ hàng của bạn hiện có: ${cart.join(', ')}. Bạn muốn chọn thêm, xem lại giỏ hàng hay thanh toán ạ?`;
+        const addedItemsText = newItems.join(', ');
+        const responseText = `Đã thêm "${addedItemsText}" vào giỏ hàng. Giỏ hàng của bạn hiện có: ${cart.join(', ')}.`;
+
+        // 1. Thêm tin nhắn văn bản vào mảng phản hồi
+        fulfillmentMessages.push({
+          text: {
+            text: [responseText],
+          },
+        });
+
+        // =================================================================
+        // === NÂNG CẤP: TẠO CÁC NÚT BẤM GỢI Ý ===
+        // 2. Thêm một bộ nút bấm gợi ý vào mảng phản hồi
+        fulfillmentMessages.push({
+          payload: {
+            richContent: [
+              [
+                {
+                  type: 'chips',
+                  options: [
+                    { text: 'Xem Gà Lẻ' },
+                    { text: 'Xem Món Ăn Kèm' },
+                    { text: 'Xem Nước Uống & Kem' },
+                    { text: 'Thanh toán' }
+                  ]
+                }
+              ]
+            ]
+          }
+        });
+        // =================================================================
+
+        // Tạo lại context 'dang-chon-mon' để người dùng có thể chọn thêm.
+        outputContexts.push({
+          name: `${sessionPath}/contexts/dang-chon-mon`,
+          lifespanCount: 5,
+        });
+
       } else {
-        responseText = "Xin lỗi, tôi chưa rõ bạn muốn chọn món nào. Bạn có thể nói lại được không?";
+        fulfillmentMessages.push({
+          text: { text: ["Xin lỗi, tôi chưa rõ bạn muốn chọn món nào. Bạn có thể nói lại được không?"] }
+        });
       }
       break;
     }
 
-    // Trường hợp người dùng muốn thanh toán
-    case 'Thanh-toan': { // Sửa lại tên cho khớp với Dialogflow
+    case 'Thanh-toan': {
       if (cart.length > 0) {
         const orderSummary = cart.join(', ');
-        responseText = `Em xin xác nhận đơn hàng của anh/chị gồm có: ${orderSummary}. Em đã gửi thông tin đến quầy. Cảm ơn anh/chị đã đặt hàng tại FASTTASTE!`;
+        const responseText = `Em xin xác nhận đơn hàng của anh/chị gồm có: ${orderSummary}. Em đã gửi thông tin đến quầy. Cảm ơn anh/chị đã đặt hàng tại FASTTASTE!`;
         cart = []; // Xóa giỏ hàng sau khi đã chốt đơn
+        fulfillmentMessages.push({ text: { text: [responseText] } });
       } else {
-        responseText = 'Dạ, giỏ hàng của anh/chị đang trống ạ. Anh/chị có muốn xem thực đơn để chọn món không?';
+        const responseText = 'Dạ, giỏ hàng của anh/chị đang trống ạ. Anh/chị có muốn xem thực đơn để chọn món không?';
+        fulfillmentMessages.push({ text: { text: [responseText] } });
       }
       break;
     }
 
-    // Trường hợp mặc định, nếu không khớp với các case trên
     default: {
-      responseText = `Webhook đang phát triển, đã nhận được intent: ${intentName}`;
+      const responseText = `Webhook đang phát triển, đã nhận được intent: ${intentName}`;
+      fulfillmentMessages.push({ text: { text: [responseText] } });
       break;
     }
   }
 
   // Tạo cấu trúc JSON để trả lời lại cho Dialogflow
   const responseJson = {
-    fulfillmentMessages: [
-      {
-        text: {
-          text: [responseText], // Câu trả lời của bot
-        },
-      },
-    ],
-    // QUAN TRỌNG: Gửi lại giỏ hàng đã được cập nhật cho Dialogflow
-    // để nó lưu lại cho các lượt nói chuyện tiếp theo.
+    fulfillmentMessages: fulfillmentMessages, // Gửi về toàn bộ tin nhắn (văn bản + nút)
+    outputContexts: outputContexts,
     sessionInfo: {
       parameters: {
         cart: cart,
