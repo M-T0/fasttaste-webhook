@@ -1,4 +1,4 @@
-// === PHIÊN BẢN "RESET" - ĐƠN GIẢN VÀ ỔN ĐỊNH ===
+// Import thư viện express để tạo server
 const express = require('express');
 const app = express();
 
@@ -7,47 +7,96 @@ app.use(express.json());
 
 // Đây là điểm cuối (endpoint) để nhận request từ Dialogflow
 app.post('/api', (req, res) => {
-  // Luôn dùng try...catch để bắt mọi lỗi có thể xảy ra
   try {
     const queryResult = req.body.queryResult;
     const intentName = queryResult.intent.displayName;
-    const session = req.body.session;
+    const session = req.body.session; // Lấy session path của Dialogflow ES
     const parameters = queryResult.parameters;
 
-    // Lấy giỏ hàng từ context, nếu không có thì tạo mới
+    // Lấy giỏ hàng từ parameters. Đây là cách Dialogflow ES truyền dữ liệu từ context.
     let cart = parameters.cart || [];
+
     let fulfillmentMessages = [];
     let outputContexts = [];
 
-    // === CHÚNG TA CHỈ XỬ LÝ DUY NHẤT INTENT 'muathem' ===
-    if (intentName === 'muathem') {
-      let newItems = parameters.mon_an || [];
-      if (!Array.isArray(newItems)) { newItems = [newItems]; }
+    switch (intentName) {
+      case 'Xem Menu - chonmon':
+      case 'muathem': {
+        let newItems = parameters.mon_an || [];
+        if (!Array.isArray(newItems)) { newItems = [newItems]; }
 
-      if (newItems.length > 0) {
-        // Thêm món mới vào giỏ hàng
-        cart = cart.concat(newItems);
-        const addedItemsText = newItems.join(', ');
-        const responseText = `(TEST) Đã thêm "${addedItemsText}". Giỏ hàng hiện có: ${cart.join(', ')}.`;
-        
-        fulfillmentMessages.push({ text: { text: [responseText] } });
-        
-        // Gửi lại giỏ hàng đã cập nhật trong context
-        outputContexts.push({
-          name: `${session}/contexts/dang-chon-mon`,
-          lifespanCount: 5,
-          parameters: { cart: cart }
-        });
+        if (newItems.length > 0) {
+          cart = cart.concat(newItems);
+          const addedItemsText = newItems.join(', ');
+          const responseText = `Đã thêm "${addedItemsText}" vào giỏ hàng. Giỏ hàng của bạn hiện có: ${cart.join(', ')}.`;
+          
+          fulfillmentMessages.push({ text: { text: [responseText] } });
+          fulfillmentMessages.push({
+            payload: { richContent: [[{ type: 'chips', options: [{ text: 'Xem Gà Lẻ' }, { text: 'Xem Món Ăn Kèm' }, { text: 'Xem Nước Uống & Kem' }, { text: 'Thanh toán' }] }]] }
+          });
 
-      } else {
-        fulfillmentMessages.push({ text: { text: ["(TEST) Xin lỗi, tôi không bắt được món ăn bạn vừa gọi."] } });
+          // *** CÁCH LƯU GIỎ HÀNG CHUẨN CỦA DIALOGFLOW ES ***
+          // Gửi lại giỏ hàng đã cập nhật trong parameters của output context
+          outputContexts.push({
+            name: `${session}/contexts/dang-chon-mon`,
+            lifespanCount: 5,
+            parameters: { cart: cart }
+          });
+        } else {
+          fulfillmentMessages.push({ text: { text: ["Xin lỗi, tôi chưa rõ bạn muốn chọn món nào."] } });
+        }
+        break;
       }
-    } else {
-      // Nếu là bất kỳ intent nào khác, chỉ báo lại tên của nó để chúng ta biết nó đã được gọi
-      fulfillmentMessages.push({ text: { text: [`(TEST) Đã nhận intent: ${intentName}. Chức năng này sẽ được thêm sau.`] } });
+
+      case 'Thanh-toan': {
+        // Giỏ hàng 'cart' ở đây sẽ được lấy đúng từ context 'dang-chon-mon'
+        if (cart.length > 0) {
+          const orderSummary = cart.join(', ');
+          const responseText = `Em xin xác nhận đơn hàng của anh/chị gồm có: ${orderSummary}. Anh/chị vui lòng chọn phương thức nhận hàng ạ:`;
+          
+          fulfillmentMessages.push({ text: { text: [responseText] } });
+          fulfillmentMessages.push({
+            payload: { richContent: [[{ type: 'chips', options: [{ text: 'Giao hàng tận nơi' }, { text: 'Đến lấy tại cửa hàng' }] }]] }
+          });
+          
+          // Tạo context mới và truyền giỏ hàng sang
+          outputContexts.push({
+            name: `${session}/contexts/choosing-delivery-method`,
+            lifespanCount: 2,
+            parameters: { cart: cart }
+          });
+        } else {
+          fulfillmentMessages.push({ text: { text: ['Dạ, giỏ hàng của anh/chị đang trống nên chưa thể thanh toán.'] } });
+        }
+        break;
+      }
+      
+      // Các case còn lại không cần thay đổi nhiều
+      case 'ChonGiaoHang': {
+        fulfillmentMessages.push({ text: { text: ['Dạ, anh/chị vui lòng cho em xin địa chỉ và số điện thoại để giao hàng ạ.'] } });
+        outputContexts.push({ name: `${session}/contexts/awaiting-address`, lifespanCount: 2 });
+        break;
+      }
+
+      case 'ChonDenLay': {
+        fulfillmentMessages.push({ text: { text: ['Dạ, đơn hàng của anh/chị sẽ được chuẩn bị. Mời anh/chị đến cửa hàng FASTTASTE tại [Điền địa chỉ của bạn] để nhận hàng nhé. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!'] } });
+        // Không cần truyền lại giỏ hàng, coi như đã xóa
+        break;
+      }
+
+      case 'CungCapDiaChi': {
+        fulfillmentMessages.push({ text: { text: ['Em đã nhận được thông tin. Đơn hàng sẽ được giao đến cho anh/chị trong thời gian sớm nhất. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!'] } });
+        // Không cần truyền lại giỏ hàng, coi như đã xóa
+        break;
+      }
+
+      default: {
+        fulfillmentMessages.push({ text: { text: [`Webhook đang phát triển, đã nhận được intent: ${intentName}`] } });
+        break;
+      }
     }
 
-    // Tạo và gửi phản hồi chuẩn cho Dialogflow ES
+    // Cấu trúc phản hồi chuẩn cho Dialogflow ES
     const responseJson = {
       fulfillmentMessages: fulfillmentMessages,
       outputContexts: outputContexts,
@@ -55,13 +104,11 @@ app.post('/api', (req, res) => {
     res.status(200).send(responseJson);
 
   } catch (error) {
-    // Nếu có bất kỳ lỗi nghiêm trọng nào, bot sẽ báo lại thay vì im lặng
-    console.error('LỖI WEBHOOK NGHIÊM TRỌNG:', error);
+    console.error('LỖI WEBHOOK:', error);
     res.status(200).send({
-      fulfillmentMessages: [{ text: { text: ['(TEST) Oops! "Đầu bếp" đã gặp lỗi nghiêm trọng. Vui lòng kiểm tra lại code.'] } }]
+      fulfillmentMessages: [{ text: { text: ['Oops! Có lỗi xảy ra ở phía đầu bếp. Vui lòng thử lại.'] } }]
     });
   }
 });
 
-// Xuất app để Vercel có thể sử dụng
 module.exports = app;
