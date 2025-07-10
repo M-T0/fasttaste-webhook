@@ -8,11 +8,13 @@ app.use(express.json());
 // Đây là điểm cuối (endpoint) để nhận request từ Dialogflow
 app.post('/api', (req, res) => {
   try {
-    const intentName = req.body.queryResult.intent.displayName;
-    const sessionPath = (req.body.sessionInfo && req.body.sessionInfo.session) ? req.body.sessionInfo.session : '';
-    const sessionInfo = req.body.sessionInfo || {};
-    const sessionParams = sessionInfo.parameters || {};
-    let cart = sessionParams.cart || [];
+    const queryResult = req.body.queryResult;
+    const intentName = queryResult.intent.displayName;
+    const session = req.body.session; // Lấy session path của Dialogflow ES
+    const parameters = queryResult.parameters;
+
+    // Lấy giỏ hàng từ parameters. Đây là cách Dialogflow ES truyền dữ liệu từ context.
+    let cart = parameters.cart || [];
 
     let fulfillmentMessages = [];
     let outputContexts = [];
@@ -20,111 +22,92 @@ app.post('/api', (req, res) => {
     switch (intentName) {
       case 'Xem Menu - chonmon':
       case 'muathem': {
-        let newItems = req.body.queryResult.parameters.mon_an || [];
-        if (!Array.isArray(newItems)) {
-          newItems = [newItems];
-        }
+        let newItems = parameters.mon_an || [];
+        if (!Array.isArray(newItems)) { newItems = [newItems]; }
 
         if (newItems.length > 0) {
           cart = cart.concat(newItems);
           const addedItemsText = newItems.join(', ');
           const responseText = `Đã thêm "${addedItemsText}" vào giỏ hàng. Giỏ hàng của bạn hiện có: ${cart.join(', ')}.`;
-          const textMessage = { text: { text: [responseText] } };
-          const chipsMessage = {
-            payload: {
-              richContent: [[{
-                type: 'chips',
-                options: [
-                  { text: 'Xem Gà Lẻ' },
-                  { text: 'Xem Món Ăn Kèm' },
-                  { text: 'Xem Nước Uống & Kem' },
-                  { text: 'Thanh toán' }
-                ]
-              }]]
-            }
-          };
-          fulfillmentMessages.push(textMessage, chipsMessage);
-          if (sessionPath) {
-            outputContexts.push({ name: `${sessionPath}/contexts/dang-chon-mon`, lifespanCount: 5 });
-          }
+          
+          fulfillmentMessages.push({ text: { text: [responseText] } });
+          fulfillmentMessages.push({
+            payload: { richContent: [[{ type: 'chips', options: [{ text: 'Xem Gà Lẻ' }, { text: 'Xem Món Ăn Kèm' }, { text: 'Xem Nước Uống & Kem' }, { text: 'Thanh toán' }] }]] }
+          });
+
+          // *** CÁCH LƯU GIỎ HÀNG CHUẨN CỦA DIALOGFLOW ES ***
+          // Gửi lại giỏ hàng đã cập nhật trong parameters của output context
+          outputContexts.push({
+            name: `${session}/contexts/dang-chon-mon`,
+            lifespanCount: 5,
+            parameters: { cart: cart }
+          });
         } else {
           fulfillmentMessages.push({ text: { text: ["Xin lỗi, tôi chưa rõ bạn muốn chọn món nào."] } });
         }
         break;
       }
 
-      // === LOGIC THANH TOÁN MỚI BẮT ĐẦU TỪ ĐÂY ===
       case 'Thanh-toan': {
+        // Giỏ hàng 'cart' ở đây sẽ được lấy đúng từ context 'dang-chon-mon'
         if (cart.length > 0) {
           const orderSummary = cart.join(', ');
           const responseText = `Em xin xác nhận đơn hàng của anh/chị gồm có: ${orderSummary}. Anh/chị vui lòng chọn phương thức nhận hàng ạ:`;
-          const textMessage = { text: { text: [responseText] } };
-          const chipsMessage = {
-            payload: {
-              richContent: [[{
-                type: 'chips',
-                options: [
-                  { text: 'Giao hàng tận nơi' },
-                  { text: 'Đến lấy tại cửa hàng' }
-                ]
-              }]]
-            }
-          };
-          fulfillmentMessages.push(textMessage, chipsMessage);
-          if (sessionPath) {
-            outputContexts.push({ name: `${sessionPath}/contexts/choosing-delivery-method`, lifespanCount: 2 });
-          }
-        } else {
-          // Xử lý khi giỏ hàng trống
-          const responseText = 'Dạ, giỏ hàng của anh/chị đang trống nên chưa thể thanh toán. Anh/chị có muốn xem thực đơn không?';
+          
           fulfillmentMessages.push({ text: { text: [responseText] } });
+          fulfillmentMessages.push({
+            payload: { richContent: [[{ type: 'chips', options: [{ text: 'Giao hàng tận nơi' }, { text: 'Đến lấy tại cửa hàng' }] }]] }
+          });
+          
+          // Tạo context mới và truyền giỏ hàng sang
+          outputContexts.push({
+            name: `${session}/contexts/choosing-delivery-method`,
+            lifespanCount: 2,
+            parameters: { cart: cart }
+          });
+        } else {
+          fulfillmentMessages.push({ text: { text: ['Dạ, giỏ hàng của anh/chị đang trống nên chưa thể thanh toán.'] } });
         }
         break;
       }
-
+      
+      // Các case còn lại không cần thay đổi nhiều
       case 'ChonGiaoHang': {
-        const responseText = 'Dạ, anh/chị vui lòng cho em xin địa chỉ và số điện thoại để giao hàng ạ.';
-        fulfillmentMessages.push({ text: { text: [responseText] } });
-        if (sessionPath) {
-          outputContexts.push({ name: `${sessionPath}/contexts/awaiting-address`, lifespanCount: 2 });
-        }
+        fulfillmentMessages.push({ text: { text: ['Dạ, anh/chị vui lòng cho em xin địa chỉ và số điện thoại để giao hàng ạ.'] } });
+        outputContexts.push({ name: `${session}/contexts/awaiting-address`, lifespanCount: 2 });
         break;
       }
 
       case 'ChonDenLay': {
-        const responseText = 'Dạ, đơn hàng của anh/chị sẽ được chuẩn bị. Mời anh/chị đến cửa hàng FASTTASTE tại [Điền địa chỉ của bạn] để nhận hàng nhé. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!';
-        fulfillmentMessages.push({ text: { text: [responseText] } });
-        cart = []; // Xóa giỏ hàng
+        fulfillmentMessages.push({ text: { text: ['Dạ, đơn hàng của anh/chị sẽ được chuẩn bị. Mời anh/chị đến cửa hàng FASTTASTE tại [Điền địa chỉ của bạn] để nhận hàng nhé. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!'] } });
+        // Không cần truyền lại giỏ hàng, coi như đã xóa
         break;
       }
 
       case 'CungCapDiaChi': {
-        // const address = req.body.queryResult.queryText; // Lấy toàn bộ nội dung khách nhập làm địa chỉ
-        const responseText = 'Em đã nhận được thông tin. Đơn hàng sẽ được giao đến cho anh/chị trong thời gian sớm nhất. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!';
-        fulfillmentMessages.push({ text: { text: [responseText] } });
-        cart = []; // Xóa giỏ hàng sau khi đã chốt đơn hoàn tất
+        fulfillmentMessages.push({ text: { text: ['Em đã nhận được thông tin. Đơn hàng sẽ được giao đến cho anh/chị trong thời gian sớm nhất. Cảm ơn quý khách đã sử dụng sản phẩm bên mình!'] } });
+        // Không cần truyền lại giỏ hàng, coi như đã xóa
         break;
       }
 
       default: {
-        const responseText = `Webhook đang phát triển, đã nhận được intent: ${intentName}`;
-        fulfillmentMessages.push({ text: { text: [responseText] } });
+        fulfillmentMessages.push({ text: { text: [`Webhook đang phát triển, đã nhận được intent: ${intentName}`] } });
         break;
       }
     }
 
+    // Cấu trúc phản hồi chuẩn cho Dialogflow ES
     const responseJson = {
       fulfillmentMessages: fulfillmentMessages,
       outputContexts: outputContexts,
-      sessionInfo: { parameters: { cart: cart } },
     };
     res.status(200).send(responseJson);
+
   } catch (error) {
     console.error('LỖI WEBHOOK:', error);
-    const errorResponse = {
+    res.status(200).send({
       fulfillmentMessages: [{ text: { text: ['Oops! Có lỗi xảy ra ở phía đầu bếp. Vui lòng thử lại.'] } }]
-    };
-    res.status(200).send(errorResponse);
+    });
   }
 });
 
