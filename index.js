@@ -66,7 +66,7 @@ app.post('/api', async (req, res) => {
       }
 
       // Chọn phương thức nhận hàng
-      case 'ChonGiaoHang': {
+      case 'Chongiaohang': {
         const method = parameters['delivery-method'];
         if (method?.includes('Giao hàng')) {
           fulfillmentMessages.push(buildTextMessage('📦 Em cần địa chỉ và số điện thoại để giao hàng ạ.'));
@@ -80,7 +80,7 @@ app.post('/api', async (req, res) => {
       }
 
       // Xác nhận đến lấy
-      case 'ChonDenLay': {
+      case 'Chondenlay': {
         fulfillmentMessages.push(buildTextMessage('🎁 Đơn hàng sẽ được chuẩn bị. Mời anh/chị đến FASTTASTE tại **7/1 Thành Thái, P.14, Q.10, TP.HCM** để nhận nhé. Cảm ơn quý khách!'));
         break;
       }
